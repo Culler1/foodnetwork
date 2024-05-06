@@ -1,0 +1,72 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import json
+
+# List of state abbreviations
+state_abbreviations = ['al', 'ak', 'az', 'ar', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 'hi', 'id', 'il', 'in', 'ia', 'ks', 'ky', 'la', 'me', 'md', 'ma', 'mi', 'mn', 'ms', 'mo', 'mt', 'ne', 'nv', 'nh', 'nj', 'nm', 'ny', 'nc', 'nd', 'oh', 'ok', 'or', 'pa', 'ri', 'sc', 'sd', 'tn', 'tx', 'ut', 'vt', 'va', 'wa', 'wv', 'wi', 'wy']
+
+# Initialize an empty list to store DataFrames
+data_frames = []
+
+# Iterate through each state abbreviation
+for state in state_abbreviations:
+    url = f'https://www.foodnetwork.com/restaurants/{state}/'
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'lxml')
+    
+    # Extract links
+    show_list = soup.find_all("li", class_='m-PromoList__a-ListItem')
+    links = [link.a['href'] for link in show_list if link.a]
+
+    # Iterate through each link to build the maps_df
+    for link in links:
+        url = "https:" + link
+        response = requests.get(url)
+        soup = BeautifulSoup(response.content, 'lxml')
+
+        # Check if the page contains "As Seen on TV"
+        headline_span = soup.find('span', class_='o-Capsule__a-HeadlineText')
+        if headline_span and "As Seen on TV" in headline_span.text:
+            section = soup.find('section', class_="o-PointOfInterest")
+            script_tag = section.find('script', type='text/x-config')
+            config_json_string = script_tag.string
+
+            # Remove invalid escape characters, if any
+            config_json_string = config_json_string.replace('\\x', '\\\\x')
+
+            # Parse the JSON data
+            try:
+                config_json = json.loads(config_json_string)
+            except json.JSONDecodeError as e:
+                print("Error decoding JSON:", e)
+                config_json = {}
+
+            maps_data = config_json.get('maps',{})
+            maps_df = pd.DataFrame([maps_data])
+
+            # Find the span with class "o-Capsule__a-HeadlineText"
+            # Find the first href after the headline span
+            if headline_span:
+                next_href = headline_span.find_next('a')['href']
+                # Extract show name from the href
+                show_name = next_href.split('/')[-3]
+                # Extract episode title from the href
+                episode_title = next_href.split('/')[-1]
+            else:
+                show_name = None
+                episode_title = None
+
+            # Add "show" and "episode" columns to the DataFrame
+            maps_df['show'] = show_name
+            maps_df['episode'] = episode_title
+
+            # Append the current DataFrame to the list of DataFrames
+            data_frames.append(maps_df)
+        else:
+            print(f"Skipping {url} as it doesn't contain 'As Seen on TV'.")
+
+# Concatenate all DataFrames into a single DataFrame
+result_df = pd.concat(data_frames, ignore_index=True)
+
+print(result_df)
